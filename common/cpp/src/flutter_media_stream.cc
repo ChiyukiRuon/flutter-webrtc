@@ -2,6 +2,12 @@
 
 #include "flutter_utf8_sanitize.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#include <mmdeviceapi.h>
+#include <wrl/client.h>
+#endif
+
 #define DEFAULT_WIDTH 1280
 #define DEFAULT_HEIGHT 720
 #define DEFAULT_FPS 30
@@ -479,6 +485,39 @@ void FlutterMediaStream::GetSources(std::unique_ptr<MethodResultProxy> result) {
 void FlutterMediaStream::SelectAudioOutput(
     const std::string& device_id,
     std::unique_ptr<MethodResultProxy> result) {
+  std::string resolved_id = device_id;
+#ifdef _WIN32
+  if (device_id.empty() || device_id == "default") {
+    // ADM enumeration order is not the system's default endpoint order.
+    // Resolve it on every selection, including after Bluetooth hotplug.
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    Microsoft::WRL::ComPtr<IMMDeviceEnumerator> enumerator;
+    Microsoft::WRL::ComPtr<IMMDevice> endpoint;
+    LPWSTR id = nullptr;
+    HRESULT status = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
+                                     CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
+    if (SUCCEEDED(status)) {
+      status = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &endpoint);
+    }
+    if (SUCCEEDED(status)) status = endpoint->GetId(&id);
+    if (SUCCEEDED(status)) {
+      const int size = WideCharToMultiByte(CP_UTF8, 0, id, -1, nullptr, 0,
+                                          nullptr, nullptr);
+      resolved_id.resize(size);
+      WideCharToMultiByte(CP_UTF8, 0, id, -1, resolved_id.data(), size,
+                          nullptr, nullptr);
+      resolved_id.resize(size - 1);
+    }
+    CoTaskMemFree(id);
+    endpoint.Reset();
+    enumerator.Reset();
+    if (SUCCEEDED(initialized)) CoUninitialize();
+    if (FAILED(status)) {
+      result->Error("Audio Output", "Could not resolve the default speaker");
+      return;
+    }
+  }
+#endif
   char deviceName[256];
   char deviceGuid[256];
   int playout_devices = base_->audio_device_->PlayoutDevices();
@@ -487,8 +526,11 @@ void FlutterMediaStream::SelectAudioOutput(
     base_->audio_device_->PlayoutDeviceName(i, deviceName, deviceGuid);
     std::string cur_device_id =
         SanitizeDeviceIdFromAudioBuffers(deviceName, deviceGuid);
-    if (device_id != "" && device_id == cur_device_id) {
-      base_->audio_device_->SetPlayoutDevice(i);
+    if (!resolved_id.empty() && resolved_id == cur_device_id) {
+      if (base_->audio_device_->SetPlayoutDevice(i) != 0) {
+        result->Error("Audio Output", "Could not switch the playout device");
+        return;
+      }
       found = true;
       break;
     }
