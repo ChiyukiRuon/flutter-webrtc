@@ -179,18 +179,28 @@ EncodableMap rtpParametersToMap(
        encodings.std_vector()) {
     EncodableMap map;
     map[EncodableValue("active")] = EncodableValue(encoding->active());
-    map[EncodableValue("maxBitrate")] =
-        EncodableValue(encoding->max_bitrate_bps());
+    // The SDK uses zero/empty strings for absent optional values. Sending
+    // those sentinels back can change immutable SSRCs or pause video at 0 fps.
+    if (encoding->max_bitrate_bps() > 0) {
+      map[EncodableValue("maxBitrate")] =
+          EncodableValue(encoding->max_bitrate_bps());
+    }
     map[EncodableValue("minBitrate")] =
         EncodableValue(encoding->min_bitrate_bps());
-    map[EncodableValue("maxFramerate")] =
-        EncodableValue(static_cast<int>(encoding->max_framerate()));
+    if (encoding->max_framerate() > 0) {
+      map[EncodableValue("maxFramerate")] =
+          EncodableValue(static_cast<int>(encoding->max_framerate()));
+    }
     map[EncodableValue("scaleResolutionDownBy")] =
         EncodableValue(encoding->scale_resolution_down_by());
-    map[EncodableValue("scalabilityMode")] =
-        EncodableValue(encoding->scalability_mode().std_string());
-    map[EncodableValue("ssrc")] =
-        EncodableValue(static_cast<int>(encoding->ssrc()));
+    if (!encoding->scalability_mode().std_string().empty()) {
+      map[EncodableValue("scalabilityMode")] =
+          EncodableValue(encoding->scalability_mode().std_string());
+    }
+    if (encoding->ssrc() != 0) {
+      map[EncodableValue("ssrc")] =
+          EncodableValue(static_cast<int>(encoding->ssrc()));
+    }
     map[EncodableValue("priority")] =
         EncodableValue(bitratePriorityToString(encoding->bitrate_priority()));
     map[EncodableValue("networkPriority")] =
@@ -834,6 +844,10 @@ scoped_refptr<RTCRtpParameters> FlutterPeerConnection::updateRtpParameters(
       encoding++;
     }
   }
+
+  // encodings() returns detached SDK wrappers. Without writing them back,
+  // set_parameters succeeds but silently keeps the old bitrate and scale.
+  parameters->set_encodings(params);
 
   EncodableValue value =
       findEncodableValue(newParameters, "degradationPreference");
