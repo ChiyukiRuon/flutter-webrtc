@@ -2615,9 +2615,12 @@ static void FlutterWebRTCApplyFieldTrials(void) {
 }
 
 - (RTCRtpTransceiver*)getRtpTransceiverById:(RTCPeerConnection*)peerConnection Id:(NSString*)Id {
+  if (Id.length == 0) return nil;
   for (RTCRtpTransceiver* transceiver in peerConnection.transceivers) {
-      NSString *mid = transceiver.mid ? transceiver.mid : @"";
-    if ([mid isEqualToString:Id]) {
+    // MIDs are nil until negotiation. Sender IDs identify each transceiver
+    // before the offer, when codec preferences must already be configured.
+    if ([transceiver.sender.senderId isEqualToString:Id] ||
+        [transceiver.mid isEqualToString:Id]) {
       return transceiver;
     }
   }
@@ -2890,7 +2893,7 @@ static void FlutterWebRTCApplyFieldTrials(void) {
 - (NSDictionary*)transceiverToMap:(RTCRtpTransceiver*)transceiver {
   NSString* mid = transceiver.mid ? transceiver.mid : @"";
   NSDictionary* params = @{
-    @"transceiverId" : mid,
+    @"transceiverId" : transceiver.sender.senderId,
     @"mid" : mid,
     @"direction" : [self transceiverDirectionString:transceiver.direction],
     @"sender" : [self rtpSenderToMap:transceiver.sender],

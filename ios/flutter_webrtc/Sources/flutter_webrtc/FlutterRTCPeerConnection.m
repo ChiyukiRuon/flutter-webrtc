@@ -802,7 +802,9 @@ NSDictionary<NSString*, NSString*>* stringToParameters(NSString* str) {
     for(RTCRtpCodecCapability* capCodec in caps.codecs) {
         if([capCodec.name isEqualToString:codec] && [capCodec.kind isEqualToString:kind]) {
             BOOL matched = YES;
-            for(NSString* key in capCodec.parameters) {
+            // An omitted fmtp does not reject a codec's default parameters.
+            // Match only constraints supplied by the caller (e.g. H264 profile).
+            for(NSString* key in parameters) {
                 NSString *value = [capCodec.parameters objectForKey:key];
                 NSString *value2 = [parameters objectForKey:key];
                 if(![value isEqualToString:value2]) {
