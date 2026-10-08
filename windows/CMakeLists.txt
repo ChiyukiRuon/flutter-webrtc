@@ -31,6 +31,7 @@ add_library(${PLUGIN_NAME} SHARED
   "../common/cpp/src/flutter_webrtc_base.cc"
   "application_loopback_capturer.cc"
   "loopback_capturer_factory.cc"
+  "wgc_screen_capturer.cc"
   "flutter_webrtc_plugin.cc"
   "task_runner_windows.cc"
 )
@@ -62,6 +63,9 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE
   runtimeobject.lib
   uuid.lib
   winmm.lib
+  d3d11.lib
+  dxgi.lib
+  windowsapp.lib
 )
 
 # List of absolute paths to libraries that should be bundled with the plugin

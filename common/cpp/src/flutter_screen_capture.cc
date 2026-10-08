@@ -3,6 +3,10 @@
 
 #include <stdexcept>
 
+#ifdef _WIN32
+#include "wgc_screen_capturer.h"
+#endif
+
 namespace flutter_webrtc_plugin {
 
 FlutterScreenCapture::FlutterScreenCapture(FlutterWebRTCBase* base)
@@ -333,22 +337,38 @@ void FlutterScreenCapture::GetDisplayMedia(
     return;
   }
 
-  scoped_refptr<RTCDesktopCapturer> desktop_capturer =
-      base_->desktop_device_->CreateDesktopCapturer(source, show_cursor);
-
-  if (!desktop_capturer.get()) {
-    result->Error("Bad Arguments", "CreateDesktopCapturer failed!");
-    return;
-  }
-
-  desktop_capturer->RegisterDesktopCapturerObserver(this);
-
   const char* video_source_label = "screen_capture_input";
-
-  scoped_refptr<RTCVideoSource> video_source =
-      base_->factory_->CreateDesktopSource(
+  scoped_refptr<RTCVideoSource> video_source;
+  scoped_refptr<RTCDesktopCapturer> desktop_capturer;
+  scoped_refptr<RTCVideoCapturer> native_capturer;
+  std::string capture_backend = "desktop-legacy";
+#ifdef _WIN32
+  if (source->type() == kScreen) {
+    video_source = base_->factory_->CreateCustomVideoSource(
+        video_source_label, base_->ParseMediaConstraints(video_constraints));
+    const auto audio_capture = loopback_capturer_;
+    native_capturer = CreateWgcScreenCapturer(
+        source_id, static_cast<int>(fps), show_cursor, video_source,
+        [audio_capture] { if (audio_capture) audio_capture->Stop(); });
+    if (native_capturer) {
+      capture_backend = "windows-graphics-capture";
+    } else {
+      video_source = nullptr;
+    }
+  }
+#endif
+  if (!video_source) {
+    desktop_capturer =
+        base_->desktop_device_->CreateDesktopCapturer(source, show_cursor);
+    if (!desktop_capturer) {
+      result->Error("Bad Arguments", "CreateDesktopCapturer failed!");
+      return;
+    }
+    desktop_capturer->RegisterDesktopCapturerObserver(this);
+    video_source = base_->factory_->CreateDesktopSource(
           desktop_capturer, video_source_label,
           base_->ParseMediaConstraints(video_constraints));
+  }
 
   // TODO: RTCVideoSource -> RTCVideoTrack
 
@@ -361,16 +381,21 @@ void FlutterScreenCapture::GetDisplayMedia(
   info[EncodableValue("label")] = EncodableValue(track->id().std_string());
   info[EncodableValue("kind")] = EncodableValue(track->kind().std_string());
   info[EncodableValue("enabled")] = EncodableValue(track->enabled());
+  info[EncodableValue("settings")] = EncodableMap{
+      {EncodableValue("captureBackend"), EncodableValue(capture_backend)}};
   videoTracks.push_back(EncodableValue(info));
   params[EncodableValue("videoTracks")] = EncodableValue(videoTracks);
 
   stream->AddTrack(track);
 
   base_->local_tracks_[track->id().std_string()] = track;
+  if (native_capturer) {
+    base_->video_capturers_[track->id().std_string()] = native_capturer;
+  }
 
   base_->local_streams_[uuid] = stream;
 
-  desktop_capturer->Start(uint32_t(fps));
+  if (desktop_capturer) desktop_capturer->Start(uint32_t(fps));
 
   result->Success(EncodableValue(params));
 }

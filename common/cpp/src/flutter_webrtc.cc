@@ -1,5 +1,8 @@
 #include "flutter_webrtc.h"
 #include "flutter_data_channel.h"
+#ifdef _WIN32
+#include "wgc_screen_capturer.h"
+#endif
 
 #include "flutter_webrtc/flutter_web_r_t_c_plugin.h"
 
@@ -45,6 +48,30 @@ void FlutterWebRTC::HandleMethodCall(
   // Everything below needs the factory. If the Dart side never called
   // initialize() with options, fall back to the default field trials.
   EnsureWebRTCInitialized();
+
+#ifdef _WIN32
+  if (method_call.method_name() == "getScreenCaptureStats") {
+    if (!method_call.arguments()) {
+      result->Error("Bad Arguments", "Missing capture track id");
+      return;
+    }
+    const auto params = GetValue<EncodableMap>(*method_call.arguments());
+    const auto found = video_capturers_.find(findString(params, "trackId"));
+    WgcCaptureStats stats{};
+    EncodableMap values;
+    if (found != video_capturers_.end() &&
+        ReadWgcCaptureStats(found->second.get(), &stats)) {
+      values[EncodableValue("running")] = EncodableValue(stats.running);
+      values[EncodableValue("freshFrames")] =
+          EncodableValue(static_cast<int64_t>(stats.fresh_frames));
+      values[EncodableValue("deliveredFrames")] =
+          EncodableValue(static_cast<int64_t>(stats.delivered_frames));
+      values[EncodableValue("error")] = EncodableValue(stats.error);
+    }
+    result->Success(EncodableValue(values));
+    return;
+  }
+#endif
 
   if (method_call.method_name().compare("createPeerConnection") == 0) {
     if (!method_call.arguments()) {
