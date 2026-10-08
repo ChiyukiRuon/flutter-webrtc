@@ -12,6 +12,7 @@
 @class FlutterRTCFrameCapturer;
 @class FlutterRTCMediaRecorder;
 @class AudioManager;
+@protocol RTCAudioDevice;
 
 void postEvent(FlutterEventSink _Nullable sink, id _Nullable event);
 
@@ -78,6 +79,14 @@ typedef void (^CapturerStopHandler)(CompletionHandler _Nonnull handler);
 /// the delegate. When set, it takes over the audio device module's `observer`
 /// slot; when unset, the plugin's default observer behavior is unchanged.
 + (void)setAudioDeviceModuleObserver:(id<RTCAudioDeviceModuleDelegate> _Nullable)observer;
+
+/// Build every peer connection factory around this audio device instead of the
+/// plugin's AudioEngine ADM. Intended to be set once from native code before
+/// the factory is created, like `setAudioDeviceModuleObserver:`. The device
+/// then owns both directions — recording (push PCM through the delegate's
+/// `deliverRecordedData`) and playout — and voice processing is the device's
+/// business. Held strongly.
++ (void)setCustomAudioDevice:(id<RTCAudioDevice>)device;
 
 @property(nonatomic) BOOL _usingFrontCamera;
 @property(nonatomic) NSInteger _lastTargetWidth;

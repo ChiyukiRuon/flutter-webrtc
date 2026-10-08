@@ -143,6 +143,10 @@ static BOOL gAudioSessionManagementEnabled = YES;
 // retains it. See +setAudioDeviceModuleObserver:.
 static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
 
+// The host-provided audio device every factory is built around. Set once from
+// native code before the factory exists. See +setCustomAudioDevice:.
+static id<RTCAudioDevice> gCustomAudioDevice = nil;
+
 // WARP (WebRTC Abridged Roundtrip Protocol, draft-uberti-tsvwg-warp) is opted
 // into through the `enableWARP` initialize() option. The part of it that
 // libwebrtc implements is `WebRTC-IceHandshakeDtls`, the DTLS handshake
@@ -218,6 +222,10 @@ static void FlutterWebRTCApplyFieldTrials(void) {
 
 + (void)setAudioDeviceModuleObserver:(id<RTCAudioDeviceModuleDelegate>)observer {
   gAudioDeviceModuleObserver = observer;
+}
+
++ (void)setCustomAudioDevice:(id<RTCAudioDevice>)device {
+  gCustomAudioDevice = device;
 }
 
 - (BOOL)audioSessionManagementEnabled {
@@ -407,29 +415,41 @@ static void FlutterWebRTCApplyFieldTrials(void) {
         VideoEncoderFactorySimulcast* simulcastFactory =
             [[VideoEncoderFactorySimulcast alloc] initWithPrimary:encoderFactory fallback:encoderFactory];
 
-        // Use the AVAudioEngine audio device module on iOS devices and macOS.
-        //
-        // macOS previously used the CoreAudio ADM (value 0) to avoid an
-        // AVAudioIONodeImpl::SetOutputFormat sample-rate assertion when the
-        // microphone toggled during screen share (#1986, #1990). That crash
-        // predates the audio engine stability fixes shipped in WebRTC-SDK
-        // 144.7559.04+ (webrtc-sdk/webrtc#228: guarded connect:to:format:,
-        // state-based voice-processing checks, engine recreate ordering).
-        // The AudioEngine ADM enables platform voice processing (Apple
-        // AEC/NS/AGC) and the audio processing options API on macOS.
-        // iOS devices also require the AudioEngine ADM because the CoreAudio ADM
-        // crashes when NSMicrophoneUsageDescription is absent (#2007, #2009).
-        RTCAudioDeviceModuleType audioDeviceModuleType = RTCAudioDeviceModuleTypeAudioEngine;
+        if (gCustomAudioDevice != nil) {
+          // A host-provided device owns both directions — recording (push PCM
+          // through the delegate's deliverRecordedData) and playout — so neither
+          // the AudioEngine ADM nor its voice processing applies. Screen-share
+          // system audio is exactly this case: running AEC/NS/AGC over it would
+          // treat the shared sound as echo and noise.
+          _peerConnectionFactory =
+              [[RTCPeerConnectionFactory alloc] initWithEncoderFactory:simulcastFactory
+                                                        decoderFactory:decoderFactory
+                                                           audioDevice:gCustomAudioDevice];
+        } else {
+          // Use the AVAudioEngine audio device module on iOS devices and macOS.
+          //
+          // macOS previously used the CoreAudio ADM (value 0) to avoid an
+          // AVAudioIONodeImpl::SetOutputFormat sample-rate assertion when the
+          // microphone toggled during screen share (#1986, #1990). That crash
+          // predates the audio engine stability fixes shipped in WebRTC-SDK
+          // 144.7559.04+ (webrtc-sdk/webrtc#228: guarded connect:to:format:,
+          // state-based voice-processing checks, engine recreate ordering).
+          // The AudioEngine ADM enables platform voice processing (Apple
+          // AEC/NS/AGC) and the audio processing options API on macOS.
+          // iOS devices also require the AudioEngine ADM because the CoreAudio ADM
+          // crashes when NSMicrophoneUsageDescription is absent (#2007, #2009).
+          RTCAudioDeviceModuleType audioDeviceModuleType = RTCAudioDeviceModuleTypeAudioEngine;
 #if TARGET_OS_IOS && TARGET_OS_SIMULATOR
-        // The AudioEngine ADM can expose a zero-rate input on the iOS Simulator.
-        audioDeviceModuleType = RTCAudioDeviceModuleTypePlatformDefault;
+          // The AudioEngine ADM can expose a zero-rate input on the iOS Simulator.
+          audioDeviceModuleType = RTCAudioDeviceModuleTypePlatformDefault;
 #endif
-        _peerConnectionFactory =
-            [[RTCPeerConnectionFactory alloc] initWithAudioDeviceModuleType:audioDeviceModuleType
-                                                      bypassVoiceProcessing:bypassVoiceProcessing
-                                                             encoderFactory:simulcastFactory
-                                                             decoderFactory:decoderFactory
-                                                      audioProcessingModule:_audioManager.audioProcessingModule];
+          _peerConnectionFactory =
+              [[RTCPeerConnectionFactory alloc] initWithAudioDeviceModuleType:audioDeviceModuleType
+                                                        bypassVoiceProcessing:bypassVoiceProcessing
+                                                               encoderFactory:simulcastFactory
+                                                               decoderFactory:decoderFactory
+                                                        audioProcessingModule:_audioManager.audioProcessingModule];
+        }
 
         // Take the sharedSingleton slot over from an instance that never
         // created a factory.
@@ -449,7 +469,9 @@ static void FlutterWebRTCApplyFieldTrials(void) {
 #if TARGET_OS_OSX
         // CoreAudio ADM requires explicit device initialization on macOS
         RTCAudioDeviceModule* audioDeviceModule = [_peerConnectionFactory audioDeviceModule];
-        if (audioDeviceModule) {
+        // With a host-provided device there is nothing to pick here: this list
+        // belongs to the ADM we did not build.
+        if (audioDeviceModule != nil && gCustomAudioDevice == nil) {
             NSArray* inputDevices = [audioDeviceModule inputDevices];
             if (inputDevices.count > 0) {
                 RTCIODevice* defaultInput = inputDevices[0];
